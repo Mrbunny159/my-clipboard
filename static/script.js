@@ -22,33 +22,57 @@ async function logout() {
 }
 
 async function loadItems() {
-    const q = document.getElementById('search').value;
-    const date = document.getElementById('date-filter').value;
-    const res = await fetch(`/api/items?q=${q}&date=${date}`);
-    if (res.status === 401) return;
+    const q = document.getElementById('search')?.value || '';
+    const date = document.getElementById('date-filter')?.value || '';
     
-    const items = await res.json();
-    const container = document.getElementById('items-list');
-    
-    container.innerHTML = items.map(item => `
-        <div class="col-md-4 mb-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-body">
-                    ${item.title ? `<h5 class="card-title">${item.title}</h5>` : ''}
-                    ${item.type === 'text' ? 
-                        `<p class="card-text">${item.content}</p>` : 
-                        `<img src="${item.content}" class="img-fluid rounded mb-2">`}
-                    <div class="d-flex justify-content-between align-items-center mt-3 border-top pt-2">
-                        <small class="text-muted">${item.date}</small>
-                        <div>
-                            <span class="badge bg-light text-dark border">${item.type}</span>
-                            <button class="btn btn-sm btn-danger ms-2" onclick="deleteItem(${item.id})">Delete</button>
+    try {
+        const res = await fetch(`/api/items?q=${encodeURIComponent(q)}&date=${encodeURIComponent(date)}`);
+        if (res.status === 401) return;
+        
+        if (!res.ok) {
+            const errorData = await res.json();
+            console.error('Error loading items:', errorData);
+            document.getElementById('items-list').innerHTML = `<div class="alert alert-danger">Error loading items. Please try again.</div>`;
+            return;
+        }
+        
+        const items = await res.json();
+        const container = document.getElementById('items-list');
+        
+        if (items.length === 0) {
+            container.innerHTML = `<div class="col-12"><div class="alert alert-info text-center">No items yet. Try pasting something with Ctrl+V or use the + Add button!</div></div>`;
+            return;
+        }
+        
+        container.innerHTML = items.map(item => `
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        ${item.title ? `<h5 class="card-title">${escapeHtml(item.title)}</h5>` : ''}
+                        ${item.type === 'text' ? 
+                            `<p class="card-text">${escapeHtml(item.content)}</p>` : 
+                            `<img src="${item.content}" class="img-fluid rounded mb-2" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect fill=%22%23eee%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22%3EImage Error%3C/text%3E%3C/svg%3E'">`}
+                        <div class="d-flex justify-content-between align-items-center mt-3 border-top pt-2">
+                            <small class="text-muted">${item.date}</small>
+                            <div>
+                                <span class="badge bg-light text-dark border">${item.type}</span>
+                                <button class="btn btn-sm btn-danger ms-2" onclick="deleteItem(${item.id})">Delete</button>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-    `).join('');
+        `).join('');
+    } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('items-list').innerHTML = `<div class="alert alert-danger">Error loading items. Please refresh the page.</div>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 document.addEventListener('paste', async (e) => {
@@ -69,20 +93,55 @@ document.addEventListener('paste', async (e) => {
 });
 
 async function saveItem(content, type, title = null) {
-    await fetch('/api/items', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({content, type, title})
-    });
-    loadItems();
+    try {
+        const res = await fetch('/api/items', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content, type, title})
+        });
+        
+        if (!res.ok) {
+            const errorData = await res.json();
+            alert('Error saving item: ' + (errorData.error || 'Unknown error'));
+            return false;
+        }
+        
+        // Clear form and close modal after successful save
+        document.getElementById('item-title').value = '';
+        document.getElementById('item-content').value = '';
+        document.getElementById('item-image').value = '';
+        document.getElementById('item-type-select').value = 'text';
+        toggleInputType();
+        
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addItemModal'));
+        if (modal) modal.hide();
+        
+        loadItems();
+        return true;
+    } catch (error) {
+        console.error('Error saving item:', error);
+        alert('Error saving item. Please try again.');
+        return false;
+    }
 }
 
 async function deleteItem(itemId) {
     if (confirm('Are you sure you want to delete this item?')) {
-        await fetch(`/api/items/${itemId}`, {
-            method: 'DELETE'
-        });
-        loadItems();
+        try {
+            const res = await fetch(`/api/items/${itemId}`, {
+                method: 'DELETE'
+            });
+            
+            if (!res.ok) {
+                alert('Error deleting item');
+                return;
+            }
+            
+            loadItems();
+        } catch (error) {
+            console.error('Error deleting item:', error);
+            alert('Error deleting item. Please try again.');
+        }
     }
 }
 
@@ -107,34 +166,37 @@ function toggleInputType() {
 async function submitAddItem() {
     const title = document.getElementById('item-title').value;
     const type = document.getElementById('item-type-select').value;
-    const modal = bootstrap.Modal.getInstance(document.getElementById('addItemModal'));
     
-    if (type === 'text') {
-        const content = document.getElementById('item-content').value;
-        if (!content.trim()) {
-            alert('Please enter some content');
-            return;
+    try {
+        if (type === 'text') {
+            const content = document.getElementById('item-content').value;
+            if (!content.trim()) {
+                alert('Please enter some content');
+                return;
+            }
+            await saveItem(content, 'text', title || null);
+        } else {
+            const fileInput = document.getElementById('item-image');
+            if (!fileInput.files.length) {
+                alert('Please select an image');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const maxSize = 5 * 1024 * 1024; // 5MB
+            if (file.size > maxSize) {
+                alert('Image size must be less than 5MB');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                await saveItem(event.target.result, 'image', title || null);
+            };
+            reader.readAsDataURL(file);
         }
-        await saveItem(content, 'text', title);
-    } else {
-        const fileInput = document.getElementById('item-image');
-        if (!fileInput.files.length) {
-            alert('Please select an image');
-            return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            await saveItem(event.target.result, 'image', title);
-        };
-        reader.readAsDataURL(fileInput.files[0]);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
     }
-    
-    // Clear form and close modal
-    document.getElementById('item-title').value = '';
-    document.getElementById('item-content').value = '';
-    document.getElementById('item-image').value = '';
-    document.getElementById('item-type-select').value = 'text';
-    toggleInputType();
-    modal.hide();
 }

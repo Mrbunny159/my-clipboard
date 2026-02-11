@@ -213,3 +213,15 @@ def delete_item(item_id):
         import traceback
         traceback.print_exc(file=sys.stderr)
         return jsonify({"error": str(e)}), 500
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
+
+@app.route('/favicon.png')
+def favicon_png():
+    return '', 204
+
+if __name__ == '__main__':
+    print("[INFO] Starting Flask app", file=sys.stderr)
+    app.run(debug=True)

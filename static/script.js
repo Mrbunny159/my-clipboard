@@ -10,10 +10,32 @@ async function login() {
     });
 
     if (res.ok) {
-        window.location.reload();
+        // Clear error message
+        errorMsg.classList.add('d-none');
+        // Show main content and hide login
+        document.getElementById('login-section').classList.add('d-none');
+        document.getElementById('main-content').classList.remove('d-none');
+        // Load items and setup event listeners after login
+        setupAfterLogin();
     } else {
         errorMsg.classList.remove('d-none');
     }
+}
+
+function setupAfterLogin() {
+    // Add event listeners for search and filters
+    const searchInput = document.getElementById('search');
+    const dateFilter = document.getElementById('date-filter');
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', loadItems);
+    }
+    if (dateFilter) {
+        dateFilter.addEventListener('change', loadItems);
+    }
+    
+    // Load items for the first time
+    loadItems();
 }
 
 async function logout() {
@@ -147,7 +169,15 @@ async function deleteItem(itemId) {
 
 document.getElementById('search')?.addEventListener('input', loadItems);
 document.getElementById('date-filter')?.addEventListener('change', loadItems);
-window.onload = loadItems;
+
+// Check if already logged in on page load
+window.addEventListener('load', () => {
+    const mainContent = document.getElementById('main-content');
+    // If main content is visible, it means user is already logged in
+    if (mainContent && !mainContent.classList.contains('d-none')) {
+        setupAfterLogin();
+    }
+});
 
 function toggleInputType() {
     const type = document.getElementById('item-type-select').value;

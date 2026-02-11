@@ -80,3 +80,12 @@ def add_item():
     db.session.add(new_item)
     db.session.commit()
     return jsonify({"status": "saved"})
+
+@app.route('/api/items/<int:item_id>', methods=['DELETE'])
+def delete_item(item_id):
+    if not session.get('logged_in'): return jsonify({}), 401
+    item = ClipboardItem.query.get(item_id)
+    if not item: return jsonify({"status": "not found"}), 404
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"status": "deleted"})

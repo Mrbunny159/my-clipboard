@@ -40,7 +40,10 @@ async function loadItems() {
                         `<img src="${item.content}" class="img-fluid rounded mb-2">`}
                     <div class="d-flex justify-content-between align-items-center mt-3 border-top pt-2">
                         <small class="text-muted">${item.date}</small>
-                        <span class="badge bg-light text-dark border">${item.type}</span>
+                        <div>
+                            <span class="badge bg-light text-dark border">${item.type}</span>
+                            <button class="btn btn-sm btn-danger ms-2" onclick="deleteItem(${item.id})">Delete</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -72,6 +75,15 @@ async function saveItem(content, type, title = null) {
         body: JSON.stringify({content, type, title})
     });
     loadItems();
+}
+
+async function deleteItem(itemId) {
+    if (confirm('Are you sure you want to delete this item?')) {
+        await fetch(`/api/items/${itemId}`, {
+            method: 'DELETE'
+        });
+        loadItems();
+    }
 }
 
 document.getElementById('search')?.addEventListener('input', loadItems);

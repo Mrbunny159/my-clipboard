@@ -17,6 +17,7 @@ USER_CREDENTIALS = {"username": "sufi", "password": "sufiroot"}
 # Model
 class ClipboardItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=True)
     content = db.Column(db.Text, nullable=False)
     data_type = db.Column(db.String(10), nullable=False) # 'text' or 'image'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -52,13 +53,18 @@ def get_items():
     
     items_query = ClipboardItem.query
     if query:
-        items_query = items_query.filter(ClipboardItem.content.contains(query))
+        items_query = items_query.filter(
+            db.or_(
+                ClipboardItem.title.contains(query),
+                ClipboardItem.content.contains(query)
+            )
+        )
     if date_filter:
         items_query = items_query.filter(db.func.date(ClipboardItem.created_at) == date_filter)
         
     items = items_query.order_by(ClipboardItem.created_at.desc()).all()
     return jsonify([{
-        "id": i.id, "content": i.content, 
+        "id": i.id, "title": i.title, "content": i.content, 
         "type": i.data_type, "date": i.created_at.strftime("%Y-%m-%d %H:%M")
     } for i in items])
 
@@ -66,7 +72,11 @@ def get_items():
 def add_item():
     if not session.get('logged_in'): return jsonify({}), 401
     data = request.json
-    new_item = ClipboardItem(content=data['content'], data_type=data['type'])
+    new_item = ClipboardItem(
+        title=data.get('title'),
+        content=data['content'], 
+        data_type=data['type']
+    )
     db.session.add(new_item)
     db.session.commit()
     return jsonify({"status": "saved"})

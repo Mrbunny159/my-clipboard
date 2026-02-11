@@ -2,7 +2,10 @@ body { background-color: #f0f2f5; font-family: 'Inter', sans-serif; }
 h2 { font-weight: 800; color: #1a73e8; }
 .card { border: none; border-radius: 12px; transition: 0.3s; }
 .card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important; }
+.card-title { font-weight: 600; color: #1a73e8; margin-bottom: 0.75rem; font-size: 1.05rem; }
 .card-text { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; }
 .img-fluid { max-height: 250px; width: 100%; object-fit: contain; background: #eee; }
 #login-section { height: 80vh; display: flex; align-items: center; }
 .form-control { border-radius: 10px; padding: 10px 15px; }
+.btn-success { background-color: #34a853; border-color: #34a853; }
+.btn-success:hover { background-color: #2d8647; border-color: #2d8647; }

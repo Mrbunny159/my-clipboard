@@ -34,6 +34,7 @@ async function loadItems() {
         <div class="col-md-4 mb-3">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
+                    ${item.title ? `<h5 class="card-title">${item.title}</h5>` : ''}
                     ${item.type === 'text' ? 
                         `<p class="card-text">${item.content}</p>` : 
                         `<img src="${item.content}" class="img-fluid rounded mb-2">`}
@@ -64,11 +65,11 @@ document.addEventListener('paste', async (e) => {
     }
 });
 
-async function saveItem(content, type) {
+async function saveItem(content, type, title = null) {
     await fetch('/api/items', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({content, type})
+        body: JSON.stringify({content, type, title})
     });
     loadItems();
 }
@@ -76,3 +77,52 @@ async function saveItem(content, type) {
 document.getElementById('search')?.addEventListener('input', loadItems);
 document.getElementById('date-filter')?.addEventListener('change', loadItems);
 window.onload = loadItems;
+
+function toggleInputType() {
+    const type = document.getElementById('item-type-select').value;
+    const textGroup = document.getElementById('text-input-group');
+    const imageGroup = document.getElementById('image-input-group');
+    
+    if (type === 'text') {
+        textGroup.classList.remove('d-none');
+        imageGroup.classList.add('d-none');
+    } else {
+        textGroup.classList.add('d-none');
+        imageGroup.classList.remove('d-none');
+    }
+}
+
+async function submitAddItem() {
+    const title = document.getElementById('item-title').value;
+    const type = document.getElementById('item-type-select').value;
+    const modal = bootstrap.Modal.getInstance(document.getElementById('addItemModal'));
+    
+    if (type === 'text') {
+        const content = document.getElementById('item-content').value;
+        if (!content.trim()) {
+            alert('Please enter some content');
+            return;
+        }
+        await saveItem(content, 'text', title);
+    } else {
+        const fileInput = document.getElementById('item-image');
+        if (!fileInput.files.length) {
+            alert('Please select an image');
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            await saveItem(event.target.result, 'image', title);
+        };
+        reader.readAsDataURL(fileInput.files[0]);
+    }
+    
+    // Clear form and close modal
+    document.getElementById('item-title').value = '';
+    document.getElementById('item-content').value = '';
+    document.getElementById('item-image').value = '';
+    document.getElementById('item-type-select').value = 'text';
+    toggleInputType();
+    modal.hide();
+}

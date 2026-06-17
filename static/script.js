@@ -91,7 +91,7 @@ function highlightActiveFolder() {
 
 async function promptCreateFolder() {
     const name = prompt("Enter a name for the new folder:");
-    if (!name || !name.strip()) return;
+    if (!name || !name.trim()) return;
     
     const res = await fetch('/api/folders', {
         method: 'POST',

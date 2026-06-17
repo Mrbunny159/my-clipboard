@@ -298,5 +298,16 @@ def delete_item(item_id):
 @app.route('/favicon.ico')
 def favicon(): return '', 204
 
+@app.route('/api/force-reset-db')
+def force_reset_db():
+    try:
+        db.drop_all()
+        db.create_all()
+        return jsonify({"message": "Success! Database dropped and recreated with new columns."}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
 if __name__ == '__main__':
     app.run(debug=True)

@@ -160,46 +160,49 @@ async function submitEditItem() {
     await fetch(`/api/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, folder_id, content }) });
 }
 
-// --- DIRECT CLIENT FILE UPLOAD SYSTEM (EDGE CASE MANAGED) ---
-// --- DIRECT CLIENT FILE UPLOAD SYSTEM (EDGE CASE MANAGED) ---
+// --- DIRECT CLIENT FILE UPLOAD FLOW ---
 async function handleGenericFileUpload(file) {
-    // Edge Case 4: Zero Byte protection
     if (file.size === 0) return alert("Cannot upload empty (0 byte) files.");
     
-    // Edge Case 3: Crash Protection (50MB Hard Limit)
+    // Safety Net: Max limit check (e.g., 50MB limits for browser-side safety)
     const MAX_MB = 50; 
-    if (file.size > (MAX_MB * 1024 * 1024)) return alert(`File exceeds the ${MAX_MB}MB safety limit.`);
+    if (file.size > (MAX_MB * 1024 * 1024)) return alert(`File is too large. Max allowed is ${MAX_MB} MB.`);
 
     const title = file.name || `Screenshot_${Date.now()}.png`; 
     const type = file.type || 'application/octet-stream';
     const size = file.size;
     const tempId = Date.now();
 
+    // 1. Instant UI Feedback
     appState.items.unshift({ id: tempId, title: title, content: null, file_url: null, type: type, file_size: size, date: 'Just now', isSaving: true });
     renderGrid();
 
     try {
+        // 2. The Handshake
         const tokenRes = await fetch('/api/blob-token'); 
         if (!tokenRes.ok) throw new Error("Could not authenticate upload.");
         const { token } = await tokenRes.json();
 
+        // 3. The Heavy Lift (Direct to Vercel)
         const safeTitle = title.replace(/[^a-zA-Z0-9.\-]/g, "_");
         const blobUrl = `https://blob.vercel-storage.com/${Date.now()}_${safeTitle}`;
 
-        // THE FIX: Added x-api-version and content-type headers
         const uploadRes = await fetch(blobUrl, { 
             method: 'PUT', 
             headers: { 
                 'authorization': `Bearer ${token}`,
-                'x-api-version': '7',
-                'content-type': type
+                'x-api-version': '7',     // Mandatory for Vercel REST API
+                'content-type': type      // Ensures proper downloading behavior
             }, 
             body: file 
         });
         
         if (!uploadRes.ok) throw new Error("Vercel Blob rejected the file.");
+        
+        // 4. The Index
         const finalUrl = (await uploadRes.json()).url;
 
+        // 5. The Save (Send the resulting URL to your DB)
         const dbRes = await fetch('/api/items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

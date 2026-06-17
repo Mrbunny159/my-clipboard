@@ -9,15 +9,15 @@ from sqlalchemy.pool import NullPool
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
-# Secure Session Key (No hardcoded fallbacks)
+# ==========================================
+# SECURE CONFIGURATION
+# ==========================================
 server_secret = os.environ.get("SECRET_KEY")
 app.secret_key = server_secret if server_secret else os.urandom(24).hex()
 
-# Strict Credential Loading
 APP_USERNAME = os.environ.get("APP_USERNAME")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
-# Database Configuration (Neon PostgreSQL)
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
     if database_url.startswith("postgresql://"):
@@ -30,7 +30,9 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Database Models
+# ==========================================
+# DATABASE MODELS
+# ==========================================
 class Folder(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
@@ -52,7 +54,9 @@ def init_db():
         with app.app_context(): db.create_all()
     except: pass
 
-# --- Core Routes ---
+# ==========================================
+# ROUTES & SECURITY
+# ==========================================
 @app.route('/')
 def index():
     init_db()
@@ -81,28 +85,31 @@ def force_reset_db():
         return jsonify({"message": "Database successfully upgraded."}), 200
     except Exception as e: return jsonify({"error": str(e)}), 500
 
-# --- Vercel Edge Case Support Routes ---
+# ==========================================
+# VERCEL BLOB ARCHITECTURE INTEGRATIONS
+# ==========================================
 @app.route('/api/blob-token', methods=['GET'])
 def get_blob_token():
-    """Securely provisions the Vercel Blob token ONLY to logged-in users."""
+    """Securely provisions the Vercel Blob token to the frontend."""
     if not session.get('logged_in'): return jsonify({}), 401
     return jsonify({"token": os.environ.get('BLOB_READ_WRITE_TOKEN')})
 
 @app.route('/api/blob/delete', methods=['POST'])
 def delete_blob_orphan():
-    """Handles Edge Case #1: Deletes orphaned files from Vercel Blob if Neon DB crashes."""
+    """Rollback route: Deletes orphaned files from Vercel Blob if Neon DB fails to save."""
     if not session.get('logged_in'): return jsonify({}), 401
     url = request.json.get('url')
     token = os.environ.get('BLOB_READ_WRITE_TOKEN')
     if url and token:
         try:
-            headers = {"authorization": f"Bearer {token}"}
-            # Vercel Blob REST API endpoint for deletions
+            headers = {"authorization": f"Bearer {token}", "x-api-version": "7"}
             requests.post("https://blob.vercel-storage.com/delete", headers=headers, json={"urls": [url]})
         except: pass
     return jsonify({"status": "cleanup_attempted"})
 
-# --- Data Routes ---
+# ==========================================
+# CORE DATA API
+# ==========================================
 @app.route('/api/folders', methods=['GET', 'POST'])
 def handle_folders():
     if not session.get('logged_in'): return jsonify([]), 401
@@ -149,10 +156,15 @@ def add_item():
     data = request.json or {}
     try:
         folder_id = data.get('folder_id')
-        folder_id = None if folder_id in ['none', ''] else int(folder_id)
+        folder_id = None if folder_id in ['none', '', None] else int(folder_id)
+
         new_item = ClipboardItem(
-            title=data.get('title'), content=data.get('content'), file_url=data.get('file_url'),
-            file_size=data.get('file_size'), data_type=data.get('type', 'text'), folder_id=folder_id
+            title=data.get('title'),
+            content=data.get('content'), 
+            file_url=data.get('file_url'),
+            file_size=data.get('file_size'),
+            data_type=data.get('type', 'text'),
+            folder_id=folder_id
         )
         db.session.add(new_item)
         db.session.commit()
@@ -184,11 +196,13 @@ def delete_item(item_id):
         item = ClipboardItem.query.get(item_id)
         if not item: return jsonify({"status": "not found"}), 404
         
-        # Optionally cleanup Vercel Blob here if item.file_url exists
+        # Clean up Vercel Blob Space automatically
         if item.file_url:
             token = os.environ.get('BLOB_READ_WRITE_TOKEN')
             if token:
-                try: requests.post("https://blob.vercel-storage.com/delete", headers={"authorization": f"Bearer {token}"}, json={"urls": [item.file_url]})
+                try: 
+                    headers = {"authorization": f"Bearer {token}", "x-api-version": "7"}
+                    requests.post("https://blob.vercel-storage.com/delete", headers=headers, json={"urls": [item.file_url]})
                 except: pass
 
         db.session.delete(item)

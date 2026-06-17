@@ -14,11 +14,9 @@ database_url = os.environ.get("DATABASE_URL")
 print(f"[INFO] DATABASE_URL exists: {bool(database_url)}", file=sys.stderr)
 
 if database_url:
-    # Fix postgresql:// to postgresql+psycopg2://
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-    # For serverless environments, use NullPool
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'poolclass': NullPool,
         'connect_args': {'connect_timeout': 10}
@@ -37,191 +35,182 @@ except Exception as e:
     print(f"[ERROR] Failed to initialize SQLAlchemy: {e}", file=sys.stderr)
     db = None
 
-# Login Credentials - Use environment variable if available
+# Login Credentials
 USER_CREDENTIALS = {
     "username": os.environ.get("APP_USERNAME", "sufi"),
     "password": os.environ.get("APP_PASSWORD", "sufiroot")
 }
-print(f"[INFO] Using username from env: {bool(os.environ.get('APP_USERNAME'))}", file=sys.stderr)
 
-# Model
+# --- Models ---
+class Folder(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    items = db.relationship('ClipboardItem', backref='folder', lazy=True, cascade="all, delete-orphan")
+
 class ClipboardItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255), nullable=True)
-    content = db.Column(db.Text, nullable=False)
-    data_type = db.Column(db.String(10), nullable=False) # 'text' or 'image'
+    content = db.Column(db.Text, nullable=True)        # Pure text snippets
+    file_url = db.Column(db.String(1024), nullable=True) # Direct URL to file object
+    file_size = db.Column(db.Integer, nullable=True)     # Size in bytes
+    data_type = db.Column(db.String(100), nullable=False) # 'text', 'image/png', 'application/pdf', etc.
+    folder_id = db.Column(db.Integer, db.ForeignKey('folder.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Create tables safely
 def init_db():
     try:
         with app.app_context():
-            print("[DEBUG] Creating database tables", file=sys.stderr)
             db.create_all()
-            print("[DEBUG] Database tables created successfully", file=sys.stderr)
     except Exception as e:
         print(f"[ERROR] Database init error: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
 
 @app.route('/')
 def index():
-    try:
-        print("[DEBUG] Serving index.html", file=sys.stderr)
-        init_db()  # Initialize database on first request
-        return render_template('index.html', login_required=not session.get('logged_in'))
-    except Exception as e:
-        print(f"[ERROR] Error serving index: {str(e)}", file=sys.stderr)
-        return str(e), 500
+    init_db()
+    return render_template('index.html', login_required=not session.get('logged_in'))
 
 @app.route('/login', methods=['POST'])
 def login():
-    try:
-        data = request.json
-        username = data.get('username')
-        password = data.get('password')
-        print(f"[DEBUG] Login attempt with username: {username}", file=sys.stderr)
-        
-        if username == USER_CREDENTIALS["username"] and \
-           password == USER_CREDENTIALS["password"]:
-            session['logged_in'] = True
-            print(f"[DEBUG] Login successful for {username}", file=sys.stderr)
-            return jsonify({"status": "success"})
-        
-        print(f"[DEBUG] Login failed for {username}", file=sys.stderr)
-        return jsonify({"status": "error"}), 401
-    except Exception as e:
-        print(f"[ERROR] Error in login: {str(e)}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
+    data = request.json or {}
+    if data.get('username') == USER_CREDENTIALS["username"] and data.get('password') == USER_CREDENTIALS["password"]:
+        session['logged_in'] = True
+        return jsonify({"status": "success"})
+    return jsonify({"status": "error"}), 401
 
 @app.route('/logout')
 def logout():
-    try:
-        session.pop('logged_in', None)
-        print("[DEBUG] User logged out", file=sys.stderr)
-        return jsonify({"status": "logged out"})
-    except Exception as e:
-        print(f"[ERROR] Error in logout: {str(e)}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
+    session.pop('logged_in', None)
+    return jsonify({"status": "logged out"})
 
+# --- Folder API Endpoints ---
+@app.route('/api/folders', methods=['GET', 'POST'])
+def handle_folders():
+    if not session.get('logged_in'):
+        return jsonify([]), 401
+    
+    if request.method == 'POST':
+        data = request.json or {}
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({"error": "Folder name is required"}), 400
+        try:
+            new_folder = Folder(name=name)
+            db.session.add(new_folder)
+            db.session.commit()
+            return jsonify({"id": new_folder.id, "name": new_folder.name}), 201
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": "Folder already exists or error occurred"}), 400
+
+    folders = Folder.query.order_by(Folder.name.asc()).all()
+    return jsonify([{"id": f.id, "name": f.name} for f in folders])
+
+# --- Clipboard Items API Endpoints ---
 @app.route('/api/items', methods=['GET'])
 def get_items():
-    try:
-        if not session.get('logged_in'): 
-            print("[INFO] User not logged in", file=sys.stderr)
-            return jsonify([]), 401
-        
-        print("[DEBUG] Getting items from database", file=sys.stderr)
-        init_db()  # Ensure tables exist
-        
-        query = request.args.get('q', '')
-        date_filter = request.args.get('date', '')
-        
-        print(f"[DEBUG] Query: '{query}', Date: '{date_filter}'", file=sys.stderr)
-        
-        items_query = ClipboardItem.query
-        if query:
-            items_query = items_query.filter(
-                db.or_(
-                    ClipboardItem.title.contains(query),
-                    ClipboardItem.content.contains(query)
-                )
-            )
-        if date_filter:
-            items_query = items_query.filter(db.func.date(ClipboardItem.created_at) == date_filter)
+    if not session.get('logged_in'): 
+        return jsonify([]), 401
+    
+    query = request.args.get('q', '').strip()
+    date_filter = request.args.get('date', '').strip()
+    folder_id = request.args.get('folder_id', '').strip()
+    sort_by = request.args.get('sort', 'date_desc').strip()
+    
+    items_query = ClipboardItem.query
+    
+    if folder_id:
+        if folder_id == "none":
+            items_query = items_query.filter(ClipboardItem.folder_id == None)
+        else:
+            items_query = items_query.filter(ClipboardItem.folder_id == int(folder_id))
             
-        items = items_query.order_by(ClipboardItem.created_at.desc()).all()
-        print(f"[DEBUG] Found {len(items)} items", file=sys.stderr)
+    if query:
+        items_query = items_query.filter(
+            db.or_(
+                ClipboardItem.title.ilike(f"%{query}%"),
+                ClipboardItem.content.ilike(f"%{query}%"),
+                ClipboardItem.data_type.ilike(f"%{query}%")
+            )
+        )
         
+    if date_filter:
+        items_query = items_query.filter(db.func.date(ClipboardItem.created_at) == date_filter)
+        
+    # Apply Sorting logic
+    if sort_by == 'date_asc':
+        items_query = items_query.order_by(ClipboardItem.created_at.asc())
+    elif sort_by == 'size_desc':
+        items_query = items_query.order_by(ClipboardItem.file_size.desc().nullslast())
+    elif sort_by == 'size_asc':
+        items_query = items_query.order_by(ClipboardItem.file_size.asc().nullslast())
+    elif sort_by == 'title_asc':
+        items_query = items_query.order_by(ClipboardItem.title.asc())
+    else: # default: date_desc
+        items_query = items_query.order_by(ClipboardItem.created_at.desc())
+        
+    try:
+        items = items_query.all()
         response = [{
-            "id": i.id, "title": i.title, "content": i.content, 
-            "type": i.data_type, "date": i.created_at.strftime("%Y-%m-%d %H:%M")
+            "id": i.id, 
+            "title": i.title, 
+            "content": i.content, 
+            "file_url": i.file_url,
+            "file_size": i.file_size,
+            "type": i.data_type, 
+            "folder_id": i.folder_id,
+            "date": i.created_at.strftime("%Y-%m-%d %H:%M")
         } for i in items]
-        
         return jsonify(response)
-    except SQLAlchemyError as e:
-        print(f"[ERROR] SQLAlchemy error in GET /api/items: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({"error": f"Database error: {str(e)}"}), 500
     except Exception as e:
-        print(f"[ERROR] Unexpected error in GET /api/items: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({"error": f"Error: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/items', methods=['POST'])
 def add_item():
+    if not session.get('logged_in'): 
+        return jsonify({}), 401
+    
+    data = request.json or {}
     try:
-        if not session.get('logged_in'): 
-            print("[INFO] Unauthorized POST attempt", file=sys.stderr)
-            return jsonify({}), 401
-        
-        print("[DEBUG] Adding new clipboard item", file=sys.stderr)
-        init_db()  # Ensure tables exist
-        
-        data = request.json
-        print(f"[DEBUG] Item type: {data.get('type')}, Has title: {bool(data.get('title'))}", file=sys.stderr)
-        
+        folder_id = data.get('folder_id')
+        if folder_id == 'none' or folder_id == '':
+            folder_id = None
+        else:
+            folder_id = int(folder_id)
+
         new_item = ClipboardItem(
             title=data.get('title'),
-            content=data['content'], 
-            data_type=data['type']
+            content=data.get('content'), 
+            file_url=data.get('file_url'),
+            file_size=data.get('file_size'),
+            data_type=data.get('type', 'text'),
+            folder_id=folder_id
         )
         db.session.add(new_item)
         db.session.commit()
-        print("[DEBUG] Item saved successfully", file=sys.stderr)
-        return jsonify({"status": "saved"})
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        print(f"[ERROR] SQLAlchemy error in POST /api/items: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({"error": f"Database error: {str(e)}"}), 500
+        return jsonify({"status": "saved", "id": new_item.id})
     except Exception as e:
-        print(f"[ERROR] Unexpected error in POST /api/items: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/items/<int:item_id>', methods=['DELETE'])
 def delete_item(item_id):
+    if not session.get('logged_in'): 
+        return jsonify({}), 401
+    
     try:
-        if not session.get('logged_in'): 
-            print("[INFO] Unauthorized DELETE attempt", file=sys.stderr)
-            return jsonify({}), 401
-        
-        print(f"[DEBUG] Deleting item {item_id}", file=sys.stderr)
-        init_db()  # Ensure tables exist
-        
         item = ClipboardItem.query.get(item_id)
         if not item: 
-            print(f"[DEBUG] Item {item_id} not found", file=sys.stderr)
             return jsonify({"status": "not found"}), 404
         db.session.delete(item)
         db.session.commit()
-        print(f"[DEBUG] Item {item_id} deleted successfully", file=sys.stderr)
         return jsonify({"status": "deleted"})
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        print(f"[ERROR] SQLAlchemy error in DELETE /api/items/{item_id}: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({"error": f"Database error: {str(e)}"}), 500
     except Exception as e:
-        print(f"[ERROR] Unexpected error in DELETE /api/items/{item_id}: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/favicon.ico')
-def favicon():
-    return '', 204
-
-@app.route('/favicon.png')
-def favicon_png():
-    return '', 204
+def favicon(): return '', 204
 
 if __name__ == '__main__':
-    print("[INFO] Starting Flask app", file=sys.stderr)
     app.run(debug=True)

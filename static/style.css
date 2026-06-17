@@ -6,9 +6,7 @@ body {
     color: #333;
 }
 
-h2, h3, h5 { 
-    font-weight: 700; 
-}
+h2, h3, h5 { font-weight: 700; }
 
 .card { 
     border-radius: 12px; 
@@ -25,9 +23,7 @@ h2, h3, h5 {
     box-shadow: 0 8px 20px rgba(0,0,0,0.08) !important;
 }
 
-.card-title {
-    font-size: 0.95rem;
-}
+.card-title { font-size: 0.95rem; }
 
 .card-text { 
     white-space: pre-wrap; 
@@ -38,7 +34,6 @@ h2, h3, h5 {
     overflow-y: auto;
 }
 
-/* Image containment rules to retain formatting */
 .image-preview-wrapper {
     width: 100%;
     height: 160px;
@@ -54,19 +49,15 @@ h2, h3, h5 {
     object-fit: contain;
 }
 
-/* Full screen drag-and-drop overlay layout architecture */
 .drag-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
+    top: 0; left: 0; width: 100vw; height: 100vh;
     background: rgba(26, 115, 232, 0.92);
     z-index: 99999;
     display: flex;
     align-items: center;
     justify-content: center;
-    pointer-events: none; /* Allows mouse state to remain transparent */
+    pointer-events: none;
 }
 
 .overlay-box {
@@ -76,7 +67,6 @@ h2, h3, h5 {
     background: rgba(255, 255, 255, 0.05);
 }
 
-/* Custom list-group configuration states */
 .custom-sidebar-list .list-group-item {
     font-size: 0.9rem;
     font-weight: 500;

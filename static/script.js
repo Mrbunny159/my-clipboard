@@ -161,6 +161,7 @@ async function submitEditItem() {
 }
 
 // --- DIRECT CLIENT FILE UPLOAD SYSTEM (EDGE CASE MANAGED) ---
+// --- DIRECT CLIENT FILE UPLOAD SYSTEM (EDGE CASE MANAGED) ---
 async function handleGenericFileUpload(file) {
     // Edge Case 4: Zero Byte protection
     if (file.size === 0) return alert("Cannot upload empty (0 byte) files.");
@@ -169,7 +170,7 @@ async function handleGenericFileUpload(file) {
     const MAX_MB = 50; 
     if (file.size > (MAX_MB * 1024 * 1024)) return alert(`File exceeds the ${MAX_MB}MB safety limit.`);
 
-    const title = file.name || `Screenshot_${Date.now()}.png`; // Edge Case 5: Paste Name Collisions
+    const title = file.name || `Screenshot_${Date.now()}.png`; 
     const type = file.type || 'application/octet-stream';
     const size = file.size;
     const tempId = Date.now();
@@ -178,14 +179,24 @@ async function handleGenericFileUpload(file) {
     renderGrid();
 
     try {
-        const tokenRes = await fetch('/api/blob-token'); // Edge Case 2: Secure Token Fetch
+        const tokenRes = await fetch('/api/blob-token'); 
         if (!tokenRes.ok) throw new Error("Could not authenticate upload.");
         const { token } = await tokenRes.json();
 
         const safeTitle = title.replace(/[^a-zA-Z0-9.\-]/g, "_");
         const blobUrl = `https://blob.vercel-storage.com/${Date.now()}_${safeTitle}`;
 
-        const uploadRes = await fetch(blobUrl, { method: 'PUT', headers: { 'authorization': `Bearer ${token}` }, body: file });
+        // THE FIX: Added x-api-version and content-type headers
+        const uploadRes = await fetch(blobUrl, { 
+            method: 'PUT', 
+            headers: { 
+                'authorization': `Bearer ${token}`,
+                'x-api-version': '7',
+                'content-type': type
+            }, 
+            body: file 
+        });
+        
         if (!uploadRes.ok) throw new Error("Vercel Blob rejected the file.");
         const finalUrl = (await uploadRes.json()).url;
 
@@ -198,7 +209,6 @@ async function handleGenericFileUpload(file) {
         if (dbRes.ok) {
             loadItems(); 
         } else {
-            // Edge Case 1: Orphaned File Cleanup Rollback
             console.warn("Database failed to save. Rolling back Vercel Blob file...");
             fetch('/api/blob/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: finalUrl }) });
             throw new Error("Database rejected the save.");

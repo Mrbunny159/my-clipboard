@@ -91,35 +91,36 @@ def force_reset_db():
 # ==========================================
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """Securely proxy the file upload from Flask directly to Vercel Blob."""
+    """Securely proxy the file upload using raw binary to bypass Vercel's multipart bug."""
     if not session.get('logged_in'): 
         return jsonify({"error": "Unauthorized"}), 401
     
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-        
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+    # Read raw binary data directly 
+    file_bytes = request.get_data()
+    if not file_bytes:
+        return jsonify({"error": "Empty payload received"}), 400
+
+    # Grab metadata from the URL query parameters instead of form data
+    filename = request.args.get('filename', 'uploaded_file')
+    mimetype = request.args.get('mimetype', 'application/octet-stream')
 
     token = os.environ.get('BLOB_READ_WRITE_TOKEN')
     if not token:
         return jsonify({"error": "Server configuration error"}), 500
         
-    # Clean the filename and build the target Blob URL
-    safe_title = re.sub(r'[^a-zA-Z0-9.\-]', '_', file.filename)
+    safe_title = re.sub(r'[^a-zA-Z0-9.\-]', '_', filename)
     timestamped_name = f"{int(datetime.utcnow().timestamp())}_{safe_title}"
     blob_url = f"https://blob.vercel-storage.com/{timestamped_name}"
     
     headers = {
         "authorization": f"Bearer {token}",
         "x-api-version": "7",
-        "content-type": file.mimetype or "application/octet-stream"
+        "content-type": mimetype
     }
     
     try:
-        # Pushing the file directly to Vercel from the server
-        response = requests.put(blob_url, headers=headers, data=file.read())
+        # Push the raw bytes directly to Vercel Blob
+        response = requests.put(blob_url, headers=headers, data=file_bytes)
         response.raise_for_status() 
         
         result = response.json()

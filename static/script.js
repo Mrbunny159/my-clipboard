@@ -161,39 +161,37 @@ async function submitEditItem() {
 }
 
 // --- SECURE PROXY FILE UPLOAD FLOW ---
+// --- SECURE PROXY FILE UPLOAD FLOW (RAW BINARY) ---
 async function handleGenericFileUpload(file) {
     if (file.size === 0) return alert("Cannot upload empty (0 byte) files.");
     
-    // Safety Net: Max limit check (e.g., 50MB limits for browser-side safety)
-    const MAX_MB = 50; 
-    if (file.size > (MAX_MB * 1024 * 1024)) return alert(`File is too large. Max allowed is ${MAX_MB} MB.`);
+    // Vercel Serverless Functions have a hard limit of 4.5MB for request bodies.
+    const MAX_MB = 4.5; 
+    if (file.size > (MAX_MB * 1024 * 1024)) return alert(`Vercel limits server uploads to ${MAX_MB} MB.`);
 
     const title = file.name || `Screenshot_${Date.now()}.png`; 
     const type = file.type || 'application/octet-stream';
     const size = file.size;
     const tempId = Date.now();
 
-    // 1. Instant UI Feedback
     appState.items.unshift({ id: tempId, title: title, content: null, file_url: null, type: type, file_size: size, date: 'Just now', isSaving: true });
     renderGrid();
 
     try {
-        // 2. Send file to Python Backend, avoiding Vercel CORS completely
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const uploadRes = await fetch('/api/upload', {
+        // Send file as raw binary, pass metadata in the URL string
+        const uploadRes = await fetch(`/api/upload?filename=${encodeURIComponent(title)}&mimetype=${encodeURIComponent(type)}`, {
             method: 'POST',
-            body: formData
+            headers: {
+                'Content-Type': 'application/octet-stream' // Bypasses the Vercel bug
+            },
+            body: file 
         });
         
         if (!uploadRes.ok) throw new Error("Backend server rejected the file upload.");
         
-        // 3. Receive the newly generated Blob URL from your backend
         const uploadData = await uploadRes.json();
         const finalUrl = uploadData.url;
 
-        // 4. Save metadata to database
         const dbRes = await fetch('/api/items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

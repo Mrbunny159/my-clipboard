@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+import re
 from flask import Flask, render_template, request, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -88,11 +89,44 @@ def force_reset_db():
 # ==========================================
 # VERCEL BLOB ARCHITECTURE INTEGRATIONS
 # ==========================================
-@app.route('/api/blob-token', methods=['GET'])
-def get_blob_token():
-    """Securely provisions the Vercel Blob token to the frontend."""
-    if not session.get('logged_in'): return jsonify({}), 401
-    return jsonify({"token": os.environ.get('BLOB_READ_WRITE_TOKEN')})
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Securely proxy the file upload from Flask directly to Vercel Blob."""
+    if not session.get('logged_in'): 
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+        
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    token = os.environ.get('BLOB_READ_WRITE_TOKEN')
+    if not token:
+        return jsonify({"error": "Server configuration error"}), 500
+        
+    # Clean the filename and build the target Blob URL
+    safe_title = re.sub(r'[^a-zA-Z0-9.\-]', '_', file.filename)
+    timestamped_name = f"{int(datetime.utcnow().timestamp())}_{safe_title}"
+    blob_url = f"https://blob.vercel-storage.com/{timestamped_name}"
+    
+    headers = {
+        "authorization": f"Bearer {token}",
+        "x-api-version": "7",
+        "content-type": file.mimetype or "application/octet-stream"
+    }
+    
+    try:
+        # Pushing the file directly to Vercel from the server
+        response = requests.put(blob_url, headers=headers, data=file.read())
+        response.raise_for_status() 
+        
+        result = response.json()
+        return jsonify({"url": result.get('url')}), 200
+        
+    except Exception as e:
+        return jsonify({"error": f"Vercel Blob rejection: {str(e)}"}), 500
 
 @app.route('/api/blob/delete', methods=['POST'])
 def delete_blob_orphan():

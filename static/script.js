@@ -160,7 +160,7 @@ async function submitEditItem() {
     await fetch(`/api/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, folder_id, content }) });
 }
 
-// --- DIRECT CLIENT FILE UPLOAD FLOW ---
+// --- SECURE PROXY FILE UPLOAD FLOW ---
 async function handleGenericFileUpload(file) {
     if (file.size === 0) return alert("Cannot upload empty (0 byte) files.");
     
@@ -178,35 +178,33 @@ async function handleGenericFileUpload(file) {
     renderGrid();
 
     try {
-        // 2. The Handshake
-        const tokenRes = await fetch('/api/blob-token'); 
-        if (!tokenRes.ok) throw new Error("Could not authenticate upload.");
-        const { token } = await tokenRes.json();
+        // 2. Send file to Python Backend, avoiding Vercel CORS completely
+        const formData = new FormData();
+        formData.append('file', file);
 
-        // 3. The Heavy Lift (Direct to Vercel)
-        const safeTitle = title.replace(/[^a-zA-Z0-9.\-]/g, "_");
-        const blobUrl = `https://blob.vercel-storage.com/${Date.now()}_${safeTitle}`;
-
-        const uploadRes = await fetch(blobUrl, { 
-            method: 'PUT', 
-            headers: { 
-                'authorization': `Bearer ${token}`,
-                'x-api-version': '7',     // Mandatory for Vercel REST API
-                'content-type': type      // Ensures proper downloading behavior
-            }, 
-            body: file 
+        const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
         });
         
-        if (!uploadRes.ok) throw new Error("Vercel Blob rejected the file.");
+        if (!uploadRes.ok) throw new Error("Backend server rejected the file upload.");
         
-        // 4. The Index
-        const finalUrl = (await uploadRes.json()).url;
+        // 3. Receive the newly generated Blob URL from your backend
+        const uploadData = await uploadRes.json();
+        const finalUrl = uploadData.url;
 
-        // 5. The Save (Send the resulting URL to your DB)
+        // 4. Save metadata to database
         const dbRes = await fetch('/api/items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: title, content: null, file_url: finalUrl, file_size: size, type: type, folder_id: currentFolderId })
+            body: JSON.stringify({ 
+                title: title, 
+                content: null, 
+                file_url: finalUrl, 
+                file_size: size, 
+                type: type, 
+                folder_id: currentFolderId 
+            })
         });
 
         if (dbRes.ok) {

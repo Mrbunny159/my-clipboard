@@ -91,43 +91,70 @@ def force_reset_db():
 # ==========================================
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """Securely proxy the file upload using raw binary to bypass Vercel's multipart bug."""
-    if not session.get('logged_in'): 
+    """Proxy file upload to Vercel Blob using the correct two-step API flow."""
+    if not session.get('logged_in'):
         return jsonify({"error": "Unauthorized"}), 401
-    
-    # Read raw binary data directly 
+
+    # Read raw binary data directly
     file_bytes = request.get_data()
     if not file_bytes:
         return jsonify({"error": "Empty payload received"}), 400
 
-    # Grab metadata from the URL query parameters instead of form data
+    # Grab metadata from URL query parameters
     filename = request.args.get('filename', 'uploaded_file')
     mimetype = request.args.get('mimetype', 'application/octet-stream')
 
     token = os.environ.get('BLOB_READ_WRITE_TOKEN')
     if not token:
-        return jsonify({"error": "Server configuration error"}), 500
-        
+        return jsonify({"error": "Server configuration error: missing BLOB_READ_WRITE_TOKEN"}), 500
+
     safe_title = re.sub(r'[^a-zA-Z0-9.\-]', '_', filename)
     timestamped_name = f"{int(datetime.utcnow().timestamp())}_{safe_title}"
-    blob_url = f"https://blob.vercel-storage.com/{timestamped_name}"
-    
-    headers = {
-        "authorization": f"Bearer {token}",
-        "x-api-version": "7",
-        "content-type": mimetype
-    }
-    
+
     try:
-        # Push the raw bytes directly to Vercel Blob
-        response = requests.put(blob_url, headers=headers, data=file_bytes)
-        response.raise_for_status() 
-        
-        result = response.json()
-        return jsonify({"url": result.get('url')}), 200
-        
+        # Step 1: POST to Vercel Blob to get a signed upload URL
+        # This is the correct API — you cannot PUT to a self-constructed URL
+        init_headers = {
+            "authorization": f"Bearer {token}",
+            "x-api-version": "7",
+            "x-blob-pathname": timestamped_name,
+            "x-blob-content-type": mimetype,
+            "x-blob-access": "public",          # matches your public blob store
+            "x-blob-multipart": "false",        # raw binary, no multipart
+        }
+        init_res = requests.post(
+            "https://blob.vercel-storage.com",
+            headers=init_headers
+        )
+        init_res.raise_for_status()
+        blob_data = init_res.json()
+
+        upload_url = blob_data.get("uploadUrl")
+        final_url  = blob_data.get("url")
+
+        if not upload_url or not final_url:
+            return jsonify({"error": "Vercel Blob did not return an upload URL", "raw": blob_data}), 500
+
+        # Step 2: PUT the raw file bytes to the signed upload URL
+        put_res = requests.put(
+            upload_url,
+            headers={"content-type": mimetype},
+            data=file_bytes
+        )
+        put_res.raise_for_status()
+
+        # Return the permanent public URL to be stored in the database
+        return jsonify({"url": final_url}), 200
+
+    except requests.exceptions.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.response.text
+        except Exception:
+            pass
+        return jsonify({"error": f"Vercel Blob HTTP error: {str(e)}", "detail": error_body}), 500
     except Exception as e:
-        return jsonify({"error": f"Vercel Blob rejection: {str(e)}"}), 500
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 @app.route('/api/blob/delete', methods=['POST'])
 def delete_blob_orphan():

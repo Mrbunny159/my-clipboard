@@ -91,7 +91,7 @@ def force_reset_db():
 # ==========================================
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """Proxy file upload to Vercel Blob using the correct two-step API flow."""
+    """Proxy file upload to Vercel Blob via the server-side REST API (single PUT)."""
     if not session.get('logged_in'):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -112,38 +112,28 @@ def upload_file():
     timestamped_name = f"{int(datetime.utcnow().timestamp())}_{safe_title}"
 
     try:
-        # Step 1: POST to Vercel Blob to get a signed upload URL
-        # This is the correct API — you cannot PUT to a self-constructed URL
-        init_headers = {
+        # Vercel Blob server-side REST API: single PUT to blob.vercel-storage.com/{pathname}
+        # The token carries the store identity — no signed URL step needed for server uploads
+        headers = {
             "authorization": f"Bearer {token}",
+            "content-type": mimetype,
             "x-api-version": "7",
-            "x-blob-pathname": timestamped_name,
-            "x-blob-content-type": mimetype,
-            "x-blob-access": "public",          # matches your public blob store
-            "x-blob-multipart": "false",        # raw binary, no multipart
+            "x-add-random-suffix": "0",
         }
-        init_res = requests.post(
-            "https://blob.vercel-storage.com",
-            headers=init_headers
-        )
-        init_res.raise_for_status()
-        blob_data = init_res.json()
 
-        upload_url = blob_data.get("uploadUrl")
-        final_url  = blob_data.get("url")
-
-        if not upload_url or not final_url:
-            return jsonify({"error": "Vercel Blob did not return an upload URL", "raw": blob_data}), 500
-
-        # Step 2: PUT the raw file bytes to the signed upload URL
-        put_res = requests.put(
-            upload_url,
-            headers={"content-type": mimetype},
+        response = requests.put(
+            f"https://blob.vercel-storage.com/{timestamped_name}",
+            headers=headers,
             data=file_bytes
         )
-        put_res.raise_for_status()
+        response.raise_for_status()
 
-        # Return the permanent public URL to be stored in the database
+        result = response.json()
+        final_url = result.get('url')
+
+        if not final_url:
+            return jsonify({"error": "Vercel Blob did not return a URL", "raw": result}), 500
+
         return jsonify({"url": final_url}), 200
 
     except requests.exceptions.HTTPError as e:
@@ -152,7 +142,7 @@ def upload_file():
             error_body = e.response.text
         except Exception:
             pass
-        return jsonify({"error": f"Vercel Blob HTTP error: {str(e)}", "detail": error_body}), 500
+        return jsonify({"error": f"Vercel Blob error: {str(e)}", "detail": error_body}), 500
     except Exception as e:
         return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
